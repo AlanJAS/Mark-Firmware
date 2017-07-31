@@ -11,8 +11,9 @@
   See file LICENSE.txt for further informations on licensing terms.
 */
 
-#ifndef Firmata_h
-#define Firmata_h
+
+#ifndef Firmata_Mod_h
+#define Firmata_Mod_h
 
 #include "Boards.h"  /* Hardware Abstraction Layer + Wiring/Arduino */
 
@@ -65,6 +66,8 @@
 /* 0x00-0x0F reserved for user-defined commands */
 #define SERIAL_MESSAGE          0x60 // communicate with serial devices, including other boards
 #define ENCODER_DATA            0x61 // reply with encoders current positions
+#define SONAR_CONFIG            0x62 // configure a sonar distance sensor for operation
+#define SONAR_DATA              0x63 // Data returned from sonar distance sensor
 #define SERVO_CONFIG            0x70 // set max angle, minPulse, maxPulse, freq
 #define STRING_DATA             0x71 // a string message with 14-bits per char
 #define STEPPER_DATA            0x72 // control a stepper motor
@@ -103,9 +106,10 @@
 #define PIN_MODE_STEPPER        0x08 // pin configured for stepper motor
 #define PIN_MODE_ENCODER        0x09 // pin configured for rotary encoders
 #define PIN_MODE_SERIAL         0x0A // pin configured for serial communication
-#define PIN_MODE_PULLUP         0x0B // enable internal pull-up resistor for pin
+#define PIN_MODE_SONAR          0x0B
+#define PIN_MODE_PULLUP         0x0D // enable internal pull-up resistor for pin
 #define PIN_MODE_IGNORE         0x7F // pin configured to be ignored by digitalWrite and capabilityResponse
-#define TOTAL_PIN_MODES         13
+#define TOTAL_PIN_MODES         14
 // DEPRECATED as of Firmata v2.5
 #define ANALOG                  0x02 // same as PIN_MODE_ANALOG
 #define PWM                     0x03 // same as PIN_MODE_PWM
