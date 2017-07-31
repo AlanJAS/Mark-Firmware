@@ -26,6 +26,7 @@
 #include <Servo.h>
 #include <Wire.h>
 #include <Firmata.h>
+#include <NewPing.h>
 
 #define I2C_WRITE                   B00000000
 #define I2C_READ                    B00001000
@@ -41,6 +42,8 @@
 
 // the minimum interval for sampling analog input
 #define MINIMUM_SAMPLING_INTERVAL   1
+
+#define INTER_PING_INTERVAL 40 // 40 ms.
 
 
 /*==============================================================================
@@ -59,7 +62,9 @@ byte reportPINs[TOTAL_PORTS];       // 1 = report this port, 0 = silence
 byte previousPINs[TOTAL_PORTS];     // previous 8 bits sent
 
 /* pins configuration */
+byte pinConfig[TOTAL_PINS];         // configuration of every pin
 byte portConfigInputs[TOTAL_PORTS]; // each bit: 1 = pin in INPUT, 0 = anything else
+int pinState[TOTAL_PINS];           // any value that has been written
 
 /* timer variables */
 unsigned long currentMillis;        // store the current value from millis()
@@ -110,6 +115,28 @@ byte wireRead(void)
   return Wire.receive();
 #endif
 }
+
+// Ping variables
+
+int numLoops = 0 ;
+int pingLoopCounter = 0 ;
+
+int numActiveSonars = 0 ; // number of sonars attached
+uint8_t sonarPinNumbers[MAX_SONARS] ;
+int nextSonar = 0 ; // index into sonars[] for next device
+
+// array to hold up to 6 instances of sonar devices
+NewPing *sonars[MAX_SONARS] ;
+
+uint8_t sonarTriggerPin;
+uint8_t sonarEchoPin ;
+uint8_t currentSonar = 0;            // Keeps track of which sensor is active.
+
+uint8_t pingInterval = 33 ;  // Milliseconds between sensor pings (29ms is about the min to avoid
+// cross- sensor echo).
+byte sonarMSB, sonarLSB ;
+
+
 
 /*==============================================================================
  * FUNCTIONS
@@ -323,8 +350,15 @@ void setPinModeCallback(byte pin, int mode)
       serialFeature.handlePinMode(pin, PIN_MODE_SERIAL);
 #endif
       break;
+
+    case PIN_MODE_SONAR:
+      Firmata.setPinMode(pin, PIN_MODE_SONAR);
+      //pinConfig[pin] = SONAR ;
+      break ;
+
     default:
       Firmata.sendString("Unknown pin mode"); // TODO: put error msgs in EEPROM
+      break ;
   }
   // TODO: save status to EEPROM here, if changed
 }
@@ -449,9 +483,13 @@ void sysexCallback(byte command, byte argc, byte *argv)
   byte mode;
   byte stopTX;
   byte slaveAddress;
+
   byte data;
   int slaveRegister;
   unsigned int delayTime;
+  byte pin ;// used for tone
+  int frequency ;
+  int duration ;
 
   switch (command) {
     case I2C_REQUEST:
@@ -463,6 +501,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
       else {
         slaveAddress = argv[0];
       }
+
 
       // need to invert the logic here since 0 will be default for client
       // libraries that have not updated to add support for restart tx
@@ -579,13 +618,18 @@ void sysexCallback(byte command, byte argc, byte *argv)
         }
       }
       break;
+     
     case SAMPLING_INTERVAL:
       if (argc > 1) {
         samplingInterval = argv[0] + (argv[1] << 7);
         if (samplingInterval < MINIMUM_SAMPLING_INTERVAL) {
           samplingInterval = MINIMUM_SAMPLING_INTERVAL;
         }
-      } else {
+        /* calculate number of loops per ping */
+        numLoops = INTER_PING_INTERVAL / samplingInterval ;
+        //numLoops = 1 ;
+      }
+      else {
         //Firmata.sendString("Not enough data");
       }
       break;
@@ -661,6 +705,34 @@ void sysexCallback(byte command, byte argc, byte *argv)
       serialFeature.handleSysex(command, argc, argv);
 #endif
       break;
+
+    case SONAR_CONFIG :
+      int max_distance ;
+      if ( numActiveSonars < MAX_SONARS)
+      {
+        sonarTriggerPin = argv[0] ;
+        sonarEchoPin = argv[1] ;
+        // set interval to a minium of 33 ms.
+        if ( argv[2] >= 33 ) {
+          pingInterval = argv[2] ;
+        }
+        else {
+          pingInterval = 33 ;
+        }
+        max_distance = argv[3] + (argv[4] << 7 ) ;
+        sonarPinNumbers[numActiveSonars] = sonarTriggerPin ;
+
+        setPinModeCallback(sonarTriggerPin, PIN_MODE_SONAR);
+        setPinModeCallback(sonarEchoPin, PIN_MODE_SONAR);
+        sonars[numActiveSonars] = new NewPing(sonarTriggerPin, sonarEchoPin, max_distance) ;
+        numActiveSonars++ ;
+      }
+      else {
+        Firmata.sendString("PING_CONFIG Error: Exceeded number of supported ping devices");
+      }
+      break ;
+
+
   }
 }
 
@@ -698,7 +770,6 @@ void systemResetCallback()
 
   // initialize a defalt state
   // TODO: option to load config from EEPROM instead of default
-
 #ifdef FIRMATA_SERIAL_FEATURE
   serialFeature.reset();
 #endif
@@ -706,7 +777,6 @@ void systemResetCallback()
   if (isI2CEnabled) {
     disableI2CPins();
   }
-
   for (byte i = 0; i < TOTAL_PORTS; i++) {
     reportPINs[i] = false;    // by default, reporting off
     portConfigInputs[i] = 0;  // until activated
@@ -723,9 +793,18 @@ void systemResetCallback()
       // sets the output to 0, configures portConfigInputs
       setPinModeCallback(i, OUTPUT);
     }
-
     servoPinMap[i] = 255;
   }
+  // stop pinging
+  numActiveSonars = 0 ;
+  for (int i = 0; i < MAX_SONARS; i++) {
+    sonarPinNumbers[i] = PIN_MODE_IGNORE ;
+    if ( sonars[i] ) {
+      sonars[i] = NULL ;
+    }
+  }
+  numActiveSonars = 0 ;
+
   // by default, do not report any analog inputs
   analogInputsToReport = 0;
 
@@ -777,6 +856,7 @@ void setup()
 void loop()
 {
   byte pin, analogPin;
+  int pingResult = 0;
 
   /* DIGITALREAD - as fast as possible, check for changes and output them to the
    * FTDI buffer using Serial.print()  */
@@ -792,6 +872,33 @@ void loop()
   currentMillis = millis();
   if (currentMillis - previousMillis > samplingInterval) {
     previousMillis += samplingInterval;
+
+    if ( pingLoopCounter++ > numLoops)
+    {
+      pingLoopCounter = 0 ;
+      if (numActiveSonars)
+      {
+        unsigned int uS = sonars[nextSonar]->ping();
+        // Convert ping time to distance in cm and print
+        pingResult = uS / US_ROUNDTRIP_CM ;
+        currentSonar = nextSonar ;
+        if ( nextSonar++ >= numActiveSonars - 1)
+        {
+          nextSonar = 0 ;
+        }
+        sonarLSB = pingResult & 0x7f ;
+        sonarMSB = pingResult >> 7 & 0x7f ;
+
+        Firmata.write(START_SYSEX);
+        Firmata.write(SONAR_DATA) ;
+        Firmata.write(sonarPinNumbers[currentSonar]) ;
+        Firmata.write(sonarLSB) ;
+        Firmata.write(sonarMSB) ;
+        Firmata.write(END_SYSEX);
+      }
+    }
+
+
     /* ANALOGREAD - do all analogReads() at the configured sampling interval */
     for (pin = 0; pin < TOTAL_PINS; pin++) {
       if (IS_PIN_ANALOG(pin) && Firmata.getPinMode(pin) == PIN_MODE_ANALOG) {
