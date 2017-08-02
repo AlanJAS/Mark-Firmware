@@ -726,6 +726,8 @@ void sysexCallback(byte command, byte argc, byte *argv)
         setPinModeCallback(sonarEchoPin, PIN_MODE_SONAR);
         sonars[numActiveSonars] = new NewPing(sonarTriggerPin, sonarEchoPin, max_distance) ;
         numActiveSonars++ ;
+        // add one loop iteration for the new sonar
+        numLoops++;
       }
       else {
         Firmata.sendString("PING_CONFIG Error: Exceeded number of supported ping devices");
