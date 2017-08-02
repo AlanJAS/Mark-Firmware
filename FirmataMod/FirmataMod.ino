@@ -25,7 +25,7 @@
 
 #include <Servo.h>
 #include <Wire.h>
-#include <Firmata.h>
+#include <FirmataMod.h>
 #include <NewPing.h>
 
 #define I2C_WRITE                   B00000000
