@@ -813,6 +813,8 @@ void systemResetCallback()
   detachedServoCount = 0;
   servoCount = 0;
 
+  numLoops = 0;
+
   /* send digital inputs to set the initial state on the host computer,
    * since once in the loop(), this firmware will only send on change */
   /*
